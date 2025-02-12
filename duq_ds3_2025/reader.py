@@ -37,11 +37,11 @@ class Reader:
         self.df["probability"] = pd.to_numeric(self.df["probability"], errors="coerce")
         self.df["path_length"] = self.df["path"].apply(len)
 
-    def get_user_data(self, user_id: str):
+    def _get_user_data(self, user_id: str):
         """Retrieve all data for a specific user."""
         return self.df[self.df["user_id"] == user_id]
 
-    def filter_by_probability(self, min_prob: float = None, max_prob: float = None):
+    def _filter_by_probability(self, min_prob: float = None, max_prob: float = None):
         """Filter records by probability range."""
         df_filtered = self.df
         if min_prob is not None:
@@ -50,7 +50,7 @@ class Reader:
             df_filtered = df_filtered[df_filtered["probability"] <= max_prob]
         return df_filtered
 
-    def summarize(self):
+    def _summarize(self):
         """Generate basic summary statistics."""
         summary = {
             "Total Users": self.df["user_id"].nunique(),
@@ -62,7 +62,7 @@ class Reader:
         }
         return pd.DataFrame(summary.items(), columns=["Metric", "Value"])
 
-    def plot_probability_distribution(self):
+    def _plot_probability_distribution(self):
         """Plot histogram of probability values."""
         self.df["probability"].hist(bins=50)
         plt.xlabel("Probability")
@@ -70,25 +70,25 @@ class Reader:
         plt.title("Probability Distribution")
         plt.show()
 
-    def plot_path_length_distribution(self):
+    def _plot_path_length_distribution(self):
         """Plot histogram of path lengths."""
-        self.df["path_length"].hist(bins=30)
+        self.df["path_length"].hist(bins=50)
         plt.xlabel("Path Length")
         plt.ylabel("Frequency")
         plt.title("Path Length Distribution")
         plt.show()
 
-    def save_to_csv(self, filename="processed_data.csv"):
+    def _save_to_csv(self, filename="processed_data.csv"):
         """Save processed DataFrame to CSV."""
         self.df.to_csv(filename, index=False)
         print(f"Data saved to {filename}")
 
-    def save_to_json(self, filename="processed_data.json"):
+    def _save_to_json(self, filename="processed_data.json"):
         """Save processed DataFrame to JSON."""
-        self.df.to_json(filename, orient="records")
+        self.df.to_json(filename, orient="records") # keeps json as dict format
         print(f"Data saved to {filename}")
 
-    def display(self):
+    def _display(self):
         """Show a sample of the dataset."""
         print(self.df.head())
 
