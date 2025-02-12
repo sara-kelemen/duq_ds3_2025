@@ -20,7 +20,7 @@ class Reader:
             return json.load(f)
 
     def _json_to_dataframe(self):
-        """Convert the nested JSON structure into a Pandas DataFrame."""
+        """Convert the JSON structure into a Pandas DataFrame."""
         records = []
         for user_id, entries in self.data.items():
             for day, values in entries.items():
@@ -34,7 +34,7 @@ class Reader:
 
     def _clean_data(self):
         """Clean the dataset by handling missing values and ensuring proper types."""
-        self.df["probability"] = pd.to_numeric(self.df["probability"], errors="coerce")
+        self.df["probability"] = pd.to_numeric(self.df["probability"], errors="coerce") # convert missing to NaN
         self.df["path_length"] = self.df["path"].apply(len)
 
     def _get_user_data(self, user_id: str):
@@ -51,7 +51,7 @@ class Reader:
         return df_filtered
 
     def _summarize(self):
-        """Generate basic summary statistics."""
+        """Generate  user cycle summary statistics."""
         summary = {
             "Total Users": self.df["user_id"].nunique(),
             "Total Observations": len(self.df),
@@ -88,7 +88,7 @@ class Reader:
         self.df.to_json(filename, orient="records") # keeps json as dict format
         print(f"Data saved to {filename}")
 
-    def _display(self):
+    def display(self):
         """Show a sample of the dataset."""
         print(self.df.head())
 
