@@ -7,18 +7,19 @@ import jarowinkler as jw
 from itertools import product
 from reusable_classifier import ReusableClassifier
 
-
 class NameMatcherPipeline:
-    def __init__(self, db_path: str, ft_model_path: str, model_type: str = 'xgboost'):
+    def __init__(self, db_path: str, ft_model_path: str, model_type: str = 'xgboost', jw_threshold: float = 0.85):
         """
         Initialize the pipeline with database path, FastText model, and classifier type.
         """
         self.db_path = db_path
         self.model_type = model_type
+        self.jw_threshold = jw_threshold
         self.ft_model = fasttext.load_model(ft_model_path)
         self.model = None
         self.dr_df = None
         self.pat_df = None
+
 
     def read_doctors(self) -> pd.DataFrame:
         query = """
@@ -56,42 +57,76 @@ class NameMatcherPipeline:
         return "".join(name)
 
     def create_manual_data(self, dr_df: pd.DataFrame, num_examples: int = 30) -> pd.DataFrame:
+        """
+        Create more balanced simulated training data using multiple positives and negatives per doctor.
+        """
         manual_examples = []
+
         for i in range(min(num_examples, len(dr_df))):
             real_name = dr_df.iloc[i]["full_name"]
-            manual_examples.append({"npi_name": real_name, "patent_name": real_name, "label": 1})
-            sim_name = self.simulate(real_name, delta=0.3)
-            manual_examples.append({"npi_name": real_name, "patent_name": sim_name, "label": 0})
+
+            # Add multiple exact match positives
+            for _ in range(3):
+                manual_examples.append({
+                    "npi_name": real_name,
+                    "patent_name": real_name,
+                    "label": 1
+                })
+
+            # Add multiple similar (non-match) negatives
+            for _ in range(2):
+                sim_name = self.simulate(real_name, delta=0.3)
+                manual_examples.append({
+                    "npi_name": real_name,
+                    "patent_name": sim_name,
+                    "label": 0
+                })
+
         return pd.DataFrame(manual_examples)
 
     def create_training(self, dr_df: pd.DataFrame, pat_df: pd.DataFrame, manual_train_df: pd.DataFrame) -> pd.DataFrame:
-        pairs = list(product(dr_df["full_name"], pat_df["full_name"]))
+        pairs = []
+        for doc in dr_df["full_name"]:
+            for pat in pat_df["full_name"]:
+                if jw.jaro_similarity(doc.lower(), pat.lower()) >= self.jw_threshold:
+                    pairs.append((doc, pat))
         paired_name_df = pd.DataFrame(pairs, columns=["Doctor", "Patentee"])
         merged = paired_name_df.merge(manual_train_df, how='left',
-                                      left_on=["Doctor", "Patentee"],
-                                      right_on=["npi_name", "patent_name"])
+                                    left_on=["Doctor", "Patentee"],
+                                    right_on=["npi_name", "patent_name"])
         merged["label"] = merged["label"].fillna(0)
         return merged
 
+
     def calc_distances(self, df: pd.DataFrame) -> pd.DataFrame:
-        df[['npi_forename', 'npi_surname']] = df['Doctor'].str.lower().str.split(' ', 1, expand=True)
-        df[['patent_forename', 'patent_surname']] = df['Patentee'].str.lower().str.split(' ', 1, expand=True)
+        df[['npi_forename', 'npi_surname']] = df['Doctor'].str.lower().str.extract(r'^(\w+)\s+(.*)$')
+        df[['patent_forename', 'patent_surname']] = df['Patentee'].str.lower().str.extract(r'^(\w+)\s+(.*)$')
         df['npi_vec'] = df['Doctor'].apply(lambda x: self.ft_model.get_sentence_vector(x))
         df['patent_vec'] = df['Patentee'].apply(lambda x: self.ft_model.get_sentence_vector(x))
-        df['jw_dist_surname'] = df.apply(lambda r: jw.jaro_similarity(r['npi_surname'], r['patent_surname']), axis=1)
-        df['jw_dist_forename'] = df.apply(lambda r: jw.jaro_similarity(r['npi_forename'], r['patent_forename']), axis=1)
+        df['jw_dist_surname'] = df.apply(lambda r: jw.jaro_similarity(str(r['npi_surname']), str(r['patent_surname'])), axis=1)
+        df['jw_dist_forename'] = df.apply(lambda r: jw.jaro_similarity(str(r['npi_forename']), str(r['patent_forename'])), axis=1)
         df['ft_dist_last_name'] = df.apply(lambda r: np.linalg.norm(r['npi_vec'] - r['patent_vec']), axis=1)
         return df
 
+
     def train(self):
         """
-        Full training pipeline.
+        Full training pipeline with simulated labels and undersampling for balance.
         """
         self.dr_df = self.read_doctors()
         self.pat_df = self.read_patentees()
-        manual_df = self.create_manual_data(self.dr_df)
 
+        manual_df = self.create_manual_data(self.dr_df)
         train_df = self.create_training(self.dr_df, self.pat_df, manual_df)
+
+        # Balance the dataset before feature calc
+        pos = train_df[train_df["label"] == 1]
+        neg = train_df[train_df["label"] == 0].sample(n=len(pos), random_state=42)
+        train_df = pd.concat([pos, neg]).reset_index(drop=True)
+
+        print(f"\n Balanced training set: {len(train_df)} pairs "
+            f"({len(pos)} positives, {len(neg)} negatives)")
+
         feat_df = self.calc_distances(train_df)
 
         self.model = ReusableClassifier(self.model_type)
@@ -102,12 +137,17 @@ class NameMatcherPipeline:
         print(feat_df[["Doctor", "Patentee", "label", "jw_dist_surname", "jw_dist_forename", "ft_dist_last_name"]].head())
 
     def predict_matches(self, output_path: str = "data/predicted_matches.csv"):
-        """
-        Predict actual doctor-patentee matches and save them.
-        """
-        pairs_df = pd.DataFrame(list(product(self.dr_df["full_name"], self.pat_df["full_name"])), columns=["Doctor", "Patentee"])
+        pairs = []
+        for doc in self.dr_df["full_name"]:
+            for pat in self.pat_df["full_name"]:
+                if jw.jaro_similarity(doc.lower(), pat.lower()) >= self.jw_threshold:
+                    pairs.append((doc, pat))
+        pairs_df = pd.DataFrame(pairs, columns=["Doctor", "Patentee"])
+        
         feat_df = self.calc_distances(pairs_df)
-        feat_df["predicted_match"] = self.model.predict(feat_df[['jw_dist_surname', 'jw_dist_forename', 'ft_dist_last_name']])
+        feat_df["predicted_match"] = self.model.predict(
+            feat_df[['jw_dist_surname', 'jw_dist_forename', 'ft_dist_last_name']]
+        )
 
         matched = feat_df[feat_df["predicted_match"] == 1]
         print("\nTop predicted matches:")
@@ -117,7 +157,6 @@ class NameMatcherPipeline:
         print(f"\nSaved predicted matches to {output_path}")
 
 
-
 #  RUN PIPELINE
 
 
@@ -125,7 +164,8 @@ if __name__ == "__main__":
     pipeline = NameMatcherPipeline(
         db_path="data/patent_npi_db.sqlite",
         ft_model_path="models/cc.en.300.bin",
-        model_type="xgboost"
+        model_type="xgboost",
+        jw_threshold=0.75  
     )
 
     pipeline.train()
