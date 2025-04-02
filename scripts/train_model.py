@@ -2,13 +2,10 @@ import pandas as pd
 import sqlite3
 import random
 import numpy as np
-import fasttext # I need help getting fast text to work
+import fasttext 
 import jarowinkler as jw
 from itertools import product
 from reusable_classifier import ReusableClassifier  
-
-# Load FastText model once globally
-ft_model = fasttext.load_model('?')
 
 
 def read_doctors(db_path: str) -> pd.DataFrame:
@@ -18,7 +15,7 @@ def read_doctors(db_path: str) -> pd.DataFrame:
     query = """
     SELECT DISTINCT surname, forename 
     FROM assignors 
-    WHERE forename IS NOT NULL AND surname IS NOT NULL;
+    WHERE surname IS NOT NULL AND forename IS NOT NULL;
     """
     conn = sqlite3.connect(db_path)
     df = pd.read_sql(query, conn)
@@ -32,14 +29,14 @@ def read_patentees(db_path: str) -> pd.DataFrame:
     Reads unique assignee (patentee) names from the database.
     """
     query = """
-    SELECT DISTINCT surname, forename 
+    SELECT DISTINCT name
     FROM assignees 
-    WHERE forename IS NOT NULL AND surname IS NOT NULL;
+    WHERE name IS NOT NULL ;
     """
     conn = sqlite3.connect(db_path)
     df = pd.read_sql(query, conn)
     conn.close()
-    df["full_name"] = df["forename"] + " " + df["surname"]
+    df["full_name"] = df["name"]
     return df[["full_name"]]
 
 
@@ -118,3 +115,63 @@ def full_train_pipeline(dr_df: pd.DataFrame, pat_df: pd.DataFrame, manual_df: pd
     feat_df = calc_distances(train_df)
     model = train_model(feat_df, train_df['label'], model_type)
     return model, feat_df
+
+if __name__ == "__main__":
+    db_path = "data/patent_npi_db.sqlite"
+    ft_model_path = "models/cc.en.300.bin"  
+
+    # Load FastText model globally
+    ft_model = fasttext.load_model(ft_model_path)
+
+    # Read doctors and patentees from database
+    dr_df = read_doctors(db_path)
+    pat_df = read_patentees(db_path)
+
+    # Generate simulated training data (positive + negative examples)
+    manual_examples = []
+    for i in range(min(30, len(dr_df))):
+        real_name = dr_df.iloc[i]["full_name"]
+        # Positive example
+        manual_examples.append({
+            "npi_name": real_name,
+            "patent_name": real_name,
+            "label": 1
+        })
+        # Negative example (slightly perturbed)
+        sim_name = simulate(real_name, delta=0.3)
+        manual_examples.append({
+            "npi_name": real_name,
+            "patent_name": sim_name,
+            "label": 0
+        })
+
+    manual_train_df = pd.DataFrame(manual_examples)
+
+    # Run the full training pipeline
+    model, feat_df = full_train_pipeline(dr_df, pat_df, manual_train_df, model_type='xgboost')
+
+    # Show example output
+    print("Model training complete!")
+    print(feat_df[["Doctor", "Patentee", "label", "jw_dist_surname", "jw_dist_forename", "ft_dist_last_name"]].head())
+
+
+    # for 4/2/25
+    prediction_pairs = pd.DataFrame(
+        list(product(dr_df["full_name"], pat_df["full_name"])),
+        columns=["Doctor", "Patentee"]
+    )
+
+    # Calculate distance features
+    prediction_feat_df = calc_distances(prediction_pairs)
+
+    # Use the trained model to predict matches (0 or 1)
+    prediction_feat_df["predicted_match"] = predict(model, prediction_feat_df)
+
+    # Show top predicted matches
+    matched = prediction_feat_df[prediction_feat_df["predicted_match"] == 1]
+    print("\nTop predicted matches:")
+    print(matched[["Doctor", "Patentee", "jw_dist_surname", "jw_dist_forename", "ft_dist_last_name"]].head())
+
+    # Optionally save the full prediction output
+    matched.to_csv("data/predicted_matches.csv", index=False)
+    print("\nSaved predicted matches to data/predicted_matches.csv")
