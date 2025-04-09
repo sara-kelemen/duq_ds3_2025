@@ -438,6 +438,22 @@ unicode = ["unicodedata2 (>=15.1.0)"]
 woff = ["brotli (>=1.0.1)", "brotlicffi (>=0.8.0)", "zopfli (>=0.1.4)"]
 
 [[package]]
+name = "fuzzy"
+version = "1.2.2"
+description = "Fast Python phonetic algorithms"
+optional = false
+python-versions = "*"
+groups = ["main"]
+markers = "python_version == \"3.11\" or python_version >= \"3.12\""
+files = [
+    {file = "Fuzzy-1.2.2.tar.gz", hash = "sha256:6b240e630235f183730b27fcb70fdd0d409bee2c3a4e7a964eeae093a28c4f38"},
+]
+
+[package.extras]
+docs = ["jaraco.packaging (>=3.2)", "rst.linker (>=1.9)", "sphinx"]
+testing = ["collective.checkdocs", "pytest (>=2.8)", "pytest-sugar"]
+
+[[package]]
 name = "fuzzywuzzy"
 version = "0.18.0"
 description = "Fuzzy string matching in python"
@@ -1849,4 +1865,4 @@ scikit-learn = ["scikit-learn"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11"
-content-hash = "06b422ef39dec2bac1ef6bbc9ea544ac059a005d728f59305897ed527a8371aa"
+content-hash = "caf1476591f3aec4d766d80bbcb779fa81d7527002b3f6477dfe21b5752d31ac"
