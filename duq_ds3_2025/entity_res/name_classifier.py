@@ -8,6 +8,8 @@ import sklearn.model_selection
 import sklearn.preprocessing
 # from xgboost import XGBClassifier  # Added XGBoost
 
+from duq_ds3_2025 import reusable_classifier
+
 class NameClassifier():
     def __init__(self, model_type: str):
         """Create a classifier, storing a model and metadata."""

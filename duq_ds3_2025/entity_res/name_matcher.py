@@ -138,7 +138,7 @@ class NameMatcher:
         print("Model training complete!")
 
     def blocks(self):
-        """Create blocks of test data, yielding data + ids"""
+        """Create blocks of test data, yielding combined features + IDs"""
         dr_df = self.read_doctors()
         pat_df = self.read_patentees()
 
@@ -159,31 +159,32 @@ class NameMatcher:
                     })
                     ids.append({'dr_id': dr['id'], 'pat_id': pat['id']})
 
-            yield self.calc_distances(pd.DataFrame(combos)), pd.DataFrame(ids)
+            if combos:  # only proceed if there's data
+                feature_df = self.calc_distances(pd.DataFrame(combos)).reset_index(drop=True)
+                ids_df = pd.DataFrame(ids).reset_index(drop=True)
+                full_df = pd.concat([feature_df, ids_df], axis=1)
+                yield full_df
+
 
     def predict_matches(self):
         """Run the backlog of doctor to patentee matches"""
         conn = db.db(self.db_path)
-        for block, result_df in self.blocks():
-            result_df['label'] = self.model.predict(block)
-            
-            # Filter matches
-            matches = result_df[result_df['label'] == 1]
+        for full_df in self.blocks():
+            full_df['label'] = self.model.predict(full_df[['jw_dist_surname', 'jw_dist_forename', 'lev_dist_surname', 'lev_dist_forename']])
 
-            if not matches.empty:
-                # Prepare insertable rows
-                rows_to_insert = matches[['dr_id', 'pat_id']].to_records(index=False)
+            matches = full_df[full_df['label'] == 1]
+            print(f"{len(matches)} matches found")
 
-                # Insert into bridge table
-                for row in rows_to_insert:
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO doctor_patentee_matches (dr_id, pat_id)
-                        VALUES (?, ?)
-                        """,
-                        (row.dr_id, row.pat_id)
-                    )
+            for _, row in matches.iterrows():
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO doctor_patentee_matches (dr_id, pat_id)
+                    VALUES (?, ?)
+                    """,
+                    (row['dr_id'], row['pat_id'])
+                )
         conn.close()
+
 
 
 
@@ -192,7 +193,7 @@ if __name__ == '__main__':
     pipeline.train()
 
     # Save the trained model
-    pipeline.model.save('data/name_matcher_model')
+    pipeline.model.save('data/name_matcher_model_2')
 
     pipeline.predict_matches()
 
